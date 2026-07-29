@@ -68,5 +68,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: "**View → Toggle Backend Logs**, or the Log Center inside the app."
+      description: |
+        The **Log Center** in the app's left sidebar. On macOS, **View → Toggle Backend Logs**
+        also shows the backend output directly.
       render: shell

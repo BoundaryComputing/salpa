@@ -73,8 +73,12 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Backend logs
+      label: Anything the app showed you
       description: |
-        If the app opened far enough, **View → Toggle Backend Logs** and paste what you see.
+        Whatever was on screen when it stopped — the text on the startup screen, an error
+        dialog, or a screenshot. If the app got as far as opening its main window, the
+        **Log Center** in the left sidebar has more detail. On macOS, **View → Toggle
+        Backend Logs** shows the backend output directly.
+
         This is usually the single most useful thing in the report.
       render: shell

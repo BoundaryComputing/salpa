@@ -1,14 +1,20 @@
 # Salpa
 
 **A visual workflow platform for computational molecular science.** Build a pipeline by
-connecting nodes on a canvas, run it locally or on GPUs in the cloud, and keep the whole thing
-reproducible.
+connecting nodes on a canvas — no code — and keep the whole thing reproducible.
+
+**Salpa runs on your own machine.** Your data, your workflow and your results stay there. When a
+step needs more than your workstation, two routes out are built into the same canvas:
+
+- **Your HPC cluster** — submit jobs to SLURM and collect the results back in the workflow.
+- **[Salpa Compute](https://www.bocores.com/salpa-compute)** — run frontier open models for
+  structure prediction, docking and genomics on managed GPUs. No cloud account, no setup, and free
+  during the Technical Preview.
 
 → **[salpa.app](https://salpa.app)** · [Documentation](https://salpa.app/docs) · [Getting started](https://salpa.app/docs/getting-started)
 
-Salpa is a closed-source desktop application. **This repository hosts the downloads, the release
-notes, and the public issue tracker** — it does not contain the application source. Two related
-projects *are* open:
+**This repository is where Salpa is distributed** — downloads, release notes, and the issue
+tracker. The application source is not kept here. Two related projects are developed in the open:
 
 | | What | Where |
 |---|---|---|
@@ -67,8 +73,8 @@ Roughly what to expect:
 | Windows | 5–15 minutes |
 | Linux (AppImage) | 3–8 minutes — including a stretch with no visible progress while the AppImage mounts |
 
-If it looks stuck, it is usually still working. **View → Toggle Backend Logs** shows what is
-happening.
+If it looks stuck, it is usually still working — give it the time above before assuming it has
+failed.
 
 On Windows, scientific packages such as GROMACS and pdb2pqr run through WSL2. If WSL is not set
 up, open PowerShell as administrator, run `wsl --install -d Ubuntu-24.04`, and reboot before
@@ -78,8 +84,8 @@ launching Salpa.
 
 **[Open an issue](https://github.com/BoundaryComputing/salpa/issues/new/choose).** Installation and
 first-launch problems are the ones we most want to hear about — they are the hardest for us to
-reproduce and the easiest to fix once we can see them. Include your OS and version, and the backend
-logs if the app got far enough to produce them.
+reproduce and the easiest to fix once we can see them. Include your OS and version, and anything the
+app managed to show you before it stopped.
 
 You can also reach us at [hello@salpa.app](mailto:hello@salpa.app).
 
