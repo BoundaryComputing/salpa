@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in Salpa behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For problems installing Salpa or getting it to start for the first time, please use the
+        **Install or first-launch problem** template instead — it asks for different things.
+
+  - type: input
+    id: salpa-version
+    attributes:
+      label: Salpa version
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and OS version
+      placeholder: "macOS 15.2 (Apple Silicon) · Ubuntu 24.04 · Windows 11"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen?
+      options:
+        - Workflow canvas — building or connecting nodes
+        - Running a workflow — execution, jobs, progress
+        - Node library or Marketplace — installing packages
+        - Environments — building a node's Python environment
+        - Cloud nodes — sign-in, credits, GPU runs
+        - Saving, opening, importing or exporting
+        - Settings
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: nodes
+    attributes:
+      label: Which nodes were involved?
+      description: If the problem involves a specific node or package, naming it helps a lot.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "**View → Toggle Backend Logs**, or the Log Center inside the app."
+      render: shell

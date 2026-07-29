@@ -1,0 +1,80 @@
+name: Install or first-launch problem
+description: Salpa will not install, will not start, or the first launch never finishes
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this — installation and first-launch failures are the hardest
+        problems for us to see from the inside, because they only happen on a machine that has
+        never run Salpa before.
+
+        **Before filing:** the first launch is genuinely slow — 1–2 minutes on macOS, 3–8 on
+        Linux, and 5–15 on Windows — because Salpa is building its Python environment. On Linux
+        there is a stretch with no visible progress at all. If you are inside that window, it is
+        probably still working.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS — Apple Silicon (M1–M4)
+        - macOS — Intel
+        - Linux — AppImage
+        - Windows — x64
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.2 · Ubuntu 24.04 · Windows 11 23H2"
+    validations:
+      required: true
+
+  - type: input
+    id: salpa-version
+    attributes:
+      label: Salpa version
+      description: The version you downloaded, from the release tag or the installer filename.
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: How far did it get?
+      options:
+        - The download or installer itself failed
+        - Installed, but the app will not open at all
+        - The app opens, but the startup screen never finishes
+        - The app opens, but shows an error
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: waited
+    attributes:
+      label: How long did you wait?
+      description: If the startup screen stalled, roughly how long before you gave up, and at which step.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Backend logs
+      description: |
+        If the app opened far enough, **View → Toggle Backend Logs** and paste what you see.
+        This is usually the single most useful thing in the report.
+      render: shell

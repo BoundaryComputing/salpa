@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://salpa.app/docs
+    about: Installation, getting started, building workflows, and writing your own nodes.
+  - name: Salpa Hub — node packages
+    url: https://github.com/BoundaryComputing/salpa-hub
+    about: Problems with a specific scientific node package belong here.
+  - name: Email us
+    url: mailto:hello@salpa.app
+    about: For anything you would rather not discuss in public.

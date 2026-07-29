@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest something Salpa should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If what you need is a **specific scientific tool wrapped as a node**, say so here — but
+        note you can also build one yourself without waiting for us. `salpa-cli` scaffolds,
+        validates and tests a node package, and installs it into your own Salpa:
+
+        ```bash
+        pip install salpa-cli
+        salpa new my-analyzer
+        ```
+
+        See [salpa.app/docs/custom-nodes](https://salpa.app/docs/custom-nodes).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the goal rather than the solution — it often has more than one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Salpa to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How do you handle it today?
+      description: Whatever you do instead — another tool, a script, doing it by hand.
