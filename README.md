@@ -39,27 +39,37 @@ need Python, pip, or conda installed.
 
 ## Install
 
-Salpa is not yet code-signed on any platform, so each OS will warn you the first time. This is
-expected for a Technical Preview; here is how to get past it.
+**macOS** — signed with an Apple Developer ID and notarized by Apple. Open the DMG, drag Salpa to
+Applications, and open it. macOS asks once, because the file came from the internet, and says so
+plainly:
 
-**macOS** — open the DMG and drag Salpa to Applications. On first launch you may see
-"unidentified developer". Either right-click the app and choose **Open**, or clear the quarantine
-attribute:
+> "Salpa" is an app downloaded from the Internet. Are you sure you want to open it?
+> Apple checked it for malicious software and none was detected.
+
+Click **Open**. That is the whole of it — no right-click trick, and **do not** clear the quarantine
+attribute. `xattr -cr` was needed for v0.1.0, which was unsigned; running it now strips the very
+evidence macOS uses to tell you the app is genuine.
+
+**Linux** — two options. The `.deb` is the easier one:
 
 ```bash
-xattr -cr /Applications/Salpa.app
+sudo apt install ./salpa_*_amd64.deb
 ```
 
-**Linux** — make the AppImage executable and run it. FUSE is required:
+It installs to `/opt/Salpa` with a menu entry and correct permissions. Do **not** launch it with
+`sudo` — running once as root leaves root-owned files inside `/opt/Salpa` that stop it starting as
+your own user afterwards.
+
+Or the AppImage, which runs anywhere but needs two extra steps:
 
 ```bash
 chmod +x Salpa-*.AppImage
 ./Salpa-*.AppImage
-# Ubuntu, if FUSE is missing:
+# Ubuntu 22.04+, if FUSE is missing:
 sudo apt install libfuse2
 ```
 
-**Windows** — run the installer. SmartScreen may warn about an unrecognized publisher; click
+**Windows** — not yet code-signed, so SmartScreen warns about an unrecognized publisher. Click
 **More info** → **Run anyway**.
 
 ## First launch takes a few minutes
