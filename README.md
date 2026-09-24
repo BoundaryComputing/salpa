@@ -90,6 +90,18 @@ On Windows, scientific packages such as GROMACS and pdb2pqr run through WSL2. If
 up, open PowerShell as administrator, run `wsl --install -d Ubuntu-24.04`, and reboot before
 launching Salpa.
 
+## How each release is checked
+
+When a release is published here, two workflows in this repository install it on fresh machines
+and use it, the way you would. Their runs are public, under **Actions**.
+
+- **Linux** ([`linux-deb-smoke.yml`](.github/workflows/linux-deb-smoke.yml)) downloads the
+  `.deb` without signing in, installs it with apt as an ordinary user, and launches it. It checks
+  that nodes load, runs the Hello World pipeline through the app's API, and restarts it.
+- **Windows** ([`windows-install-smoke.yml`](.github/workflows/windows-install-smoke.yml))
+  downloads the installer without signing in, installs it silently, launches it, checks that
+  nodes load, and uninstalls it.
+
 ## Something went wrong?
 
 **[Open an issue](https://github.com/BoundaryComputing/salpa/issues/new/choose).** Installation and

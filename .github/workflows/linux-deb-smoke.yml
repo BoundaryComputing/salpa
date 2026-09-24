@@ -1,0 +1,226 @@
+name: Linux .deb install smoke
+
+# Installs a published Salpa .deb on a fresh Ubuntu machine and uses it, the way a user would:
+# download it anonymously, install it with apt as an ordinary user, launch it, and check that the
+# app is genuinely usable. It runs by itself when a release is published here, and on demand for
+# any release tag.
+#
+# WHY A FRESH MACHINE
+#
+# A fresh runner has no earlier state to hide a fault and runs as an ordinary user with sudo,
+# which is exactly the shape of a real install. Two traps it stays clear of, both met on a
+# long-lived test machine:
+#
+#   * A root launch writes `bocoflow_nodes.egg-info` and `__pycache__` into /opt/Salpa with
+#     mode 700, and every LATER launch as a user then dies on `EACCES: permission denied`.
+#     Neither ships in the package. Do not launch Salpa as root.
+#   * /api/getnodes is legitimately empty until something starts the node bootstrap, which is
+#     LAZY: it fires on first marketplace access, not at startup. Asking too early reads as an
+#     empty registry.
+#
+# WHAT IT ASSERTS
+#
+# THE ASSERTION THAT MATTERS is /api/getnodes returning a non-empty registry. Everything cheaper
+# passes on a broken install: the .deb installs cleanly, launches, serves /api/shelf/registry with
+# every bootstrap package reading "installed", and can still have zero nodes to place on a canvas.
+#
+# It counts nodes on FIRST LAUNCH and AFTER A RESTART separately, because the difference is
+# diagnostic: equal and non-zero is healthy; zero then non-zero means the server cached an empty
+# registry at startup and nothing rescanned after the bootstrap filled it.
+#
+# It also RUNS nodes: .github/scripts/hello-world-api-run.sh loads the Hello World template
+# through the API, runs it on the job queue, and checks three completed nodes and the last node's
+# own verdict on disk. Only a job on the queue shows that the worker can import its tasks.
+#
+# And it checks that the restart reused the Python environment the first launch built.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to test (e.g. v0.7.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-launch:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60          # first launch builds a Python environment from scratch
+
+    steps:
+      - name: Fetch the .deb, anonymously
+        env:
+          VER: ${{ inputs.version || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          NUM="${VER#v}"
+          URL="https://github.com/BoundaryComputing/salpa/releases/download/${VER}/salpa_${NUM}_amd64.deb"
+          echo "GET $URL"
+          # No token, no credentials: exactly what a visitor gets. Download links were once dead
+          # for three releases while every signed-in check passed.
+          # A release is published before its files finish uploading, so wait for this one.
+          for i in $(seq 1 45); do
+            if curl -fsSL -A 'Mozilla/5.0' -o "$RUNNER_TEMP/salpa.deb" "$URL"; then break; fi
+            echo "  not there yet (attempt $i); waiting 20 s"
+            sleep 20
+          done
+          DEB="$RUNNER_TEMP/salpa.deb"
+          [ -s "$DEB" ] || { echo "::error::no .deb at $URL after 15 minutes"; exit 1; }
+          SZ=$(stat -c%s "$DEB")
+          echo "file: $DEB  ($((SZ/1048576)) MB)"
+          [ "$SZ" -gt 50000000 ] || { echo "::error::only $SZ bytes: an error page, not a build"; exit 1; }
+          # A .deb is an ar archive; anything else means HTML arrived with a 200.
+          head -c 7 "$DEB" | grep -q '!<arch>' || { echo "::error::not an ar archive, so not a .deb"; exit 1; }
+          echo "OK: ar archive"
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+
+      - name: Install it, the way a user would
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # xvfb because a Linux runner has no display; Electron exits immediately without one.
+          sudo apt-get install -y -qq xvfb >/dev/null
+          sudo apt-get install -y "$DEB"
+          echo "--- what landed ---"
+          dpkg -l | grep -iE 'salpa|bocoflow' | awk '{print "  " $2, $3}'
+          ls -ld /opt/Salpa
+
+      - name: The tree must be clean before anything runs
+        run: |
+          set -euo pipefail
+          # Nothing here has run the app yet, so anything found was shipped in the package.
+          STRAY=$(sudo find /opt/Salpa \( -name '__pycache__' -o -name '*.egg-info' -o -name '*.map' -o -name e2e -o -name tests \) 2>/dev/null | wc -l)
+          echo "stray build artefacts in the fresh install: $STRAY"
+          if [ "$STRAY" -ne 0 ]; then
+            sudo find /opt/Salpa \( -name '__pycache__' -o -name '*.egg-info' -o -name '*.map' -o -name e2e -o -name tests \) -printf '  %M %u:%g %p\n'
+            echo "::error::the .deb ships __pycache__ or .egg-info (these break launches as a user) or a source map, tests or e2e tree (build output that must never ship)"
+            exit 1
+          fi
+          echo "whoami: $(whoami)   (not root, as a real user would be)"
+
+      - name: Launch headless and wait for the backend
+        run: |
+          set -uo pipefail
+          # --no-sandbox: GitHub runners do not permit the user namespaces Electron's sandbox needs.
+          setsid xvfb-run -a /usr/bin/bocoflow-electron --no-sandbox \
+            > "$RUNNER_TEMP/first.log" 2>&1 < /dev/null &
+          for i in $(seq 1 120); do
+            if curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs; then
+              echo "backend up after ~$((i*15))s"; break
+            fi
+            sleep 15
+          done
+          curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs || {
+            echo "::error::backend never answered on :18000 within 30 minutes"
+            tail -60 "$RUNNER_TEMP/first.log"; exit 1; }
+
+      - name: Node registry after FIRST launch
+        id: first
+        run: |
+          set -uo pipefail
+          # Node bootstrapping is LAZY: it fires on first marketplace access, not at startup.
+          # Without this the registry is legitimately empty and the count means nothing.
+          curl -sf -o /dev/null --max-time 180 http://127.0.0.1:18000/api/marketplace/packages || true
+          sleep 30
+          N=$(curl -sf --max-time 60 http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
+          echo "first-launch node_key entries: $N"
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          echo "packages the app believes are installed:"
+          curl -sf --max-time 30 http://127.0.0.1:18000/api/shelf/registry \
+            | python3 -c "import json,sys; [print('  ', p['name'], p.get('shelf_state')) for p in json.load(sys.stdin).get('packages',[])]" || true
+
+      # Everything above stops at "the backend answered" and "the registry is non-empty". Neither
+      # puts a job on the queue, so a worker that cannot import its tasks passes both. This makes
+      # the worker resolve its orchestration task by dotted string and run three nodes to files on
+      # disk. The script comes from this repository's default branch: a release tag may point at
+      # a commit from before it existed.
+      - name: Get the API driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          submodules: false
+
+      - name: Run the Hello World pipeline through the API (the worker path)
+        run: |
+          set -uo pipefail
+          chmod +x .github/scripts/hello-world-api-run.sh
+          .github/scripts/hello-world-api-run.sh \
+            --api http://127.0.0.1:18000/api \
+            --work "$RUNNER_TEMP/hello-world-api" \
+            --timeout-s 300
+
+      - name: Node registry after a RESTART
+        id: restart
+        run: |
+          set -uo pipefail
+          pkill -f bocoflow-electron 2>/dev/null || true
+          pkill -f xvfb-run 2>/dev/null || true
+          sleep 8
+          setsid xvfb-run -a /usr/bin/bocoflow-electron --no-sandbox \
+            > "$RUNNER_TEMP/second.log" 2>&1 < /dev/null &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs && break
+            sleep 10
+          done
+          sleep 20
+          N=$(curl -sf --max-time 60 http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
+          echo "after-restart node_key entries: $N"
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+
+      - name: The restart reused the environment
+        # The .deb installs into root-owned /opt/Salpa, so the app copies its Python packages into
+        # user data. The copy is stamped with the build it came from, and a later launch of the
+        # same build reuses it. Across the two launches above, the stamp line must appear exactly
+        # once, and the restart must find the environment valid rather than reject it. Every grep
+        # carries `|| true`, because under the runner's `bash -e` a count of zero, which is the
+        # passing case for rejections, would end the step before it reports anything.
+        run: |
+          set -uo pipefail
+          L=$(ls -t "$HOME"/.config/*/logs/main.log 2>/dev/null | head -1 || true)
+          [ -n "$L" ] || { echo "::error::no app log under ~/.config/*/logs"; exit 1; }
+          echo "log: $L"
+          # electron-log renames main.log to main.old.log at its size limit, so read both.
+          A="$RUNNER_TEMP/app-log.txt"
+          : > "$A"
+          for f in "$(dirname "$L")/main.old.log" "$L"; do
+            if [ -f "$f" ]; then cat "$f" >> "$A"; fi
+          done
+          grep -E "Copy install complete|Copy-installed environment is not this build's|Environment is valid with all dependencies" "$A" | cut -c1-160 || true
+          stamped=$(grep -c "Copy install complete; the environment is stamped with this build" "$A" || true)
+          valid=$(grep -c "Environment is valid with all dependencies" "$A" || true)
+          rejected=$(grep -c "Copy-installed environment is not this build's" "$A" || true)
+          echo "stamped: $stamped | found valid: $valid | rejected: $rejected"
+          [ "$stamped" -eq 1 ] || { echo "::error::the environment was copy-installed $stamped times across two launches of one build; the restart should have reused it"; exit 1; }
+          [ "$rejected" -eq 0 ] || { echo "::error::the restart rejected the environment the first launch had stamped"; exit 1; }
+          [ "$valid" -ge 1 ] || { echo "::error::the restart never reported the environment valid"; exit 1; }
+          echo "OK: copy-installed once, reused on the restart"
+
+      - name: Verdict
+        run: |
+          set -euo pipefail
+          FIRST=${{ steps.first.outputs.n }}
+          AGAIN=${{ steps.restart.outputs.n }}
+          echo "first launch: $FIRST nodes    after restart: $AGAIN nodes"
+
+          if [ "$AGAIN" -lt 1 ]; then
+            echo "::error::The node registry is EMPTY even after a restart. The app installs, launches and serves the marketplace, but nothing can be placed on a canvas."
+            exit 1
+          fi
+          if [ "$FIRST" -lt 1 ]; then
+            echo "::error::First launch yields ZERO nodes and a restart yields $AGAIN. The server caches its node registry at startup, before the lazy bootstrap has filled it, and nothing rescans. A new user sees an empty node library with no reason to suspect a restart would fix it."
+            exit 1
+          fi
+          echo "OK: $FIRST nodes on first launch, $AGAIN after restart"
+
+      - name: Logs, on failure
+        if: failure()
+        run: |
+          echo "=== first launch ==="; tail -80 "$RUNNER_TEMP/first.log" 2>/dev/null || true
+          echo "=== restart ==="; tail -40 "$RUNNER_TEMP/second.log" 2>/dev/null || true
+          echo "=== hello-world work dir ==="; ls -la "$RUNNER_TEMP/hello-world-api" 2>/dev/null || true
+          echo "=== worker logs ==="; find ~/.config/bocoflow-electron -name 'worker-*.log' -exec tail -40 {} + 2>/dev/null || true

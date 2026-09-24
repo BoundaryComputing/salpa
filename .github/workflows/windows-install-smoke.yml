@@ -1,0 +1,175 @@
+name: Windows install smoke
+
+# Installs a published Salpa installer on a fresh Windows machine and uses it, the way a user
+# would: download it anonymously, install it silently, launch it, wait out the first-run
+# environment build, check that the app is genuinely usable, then uninstall it. It runs by itself
+# when a release is published here, and on demand for any release tag.
+#
+# A windows-latest runner has a real desktop session, so Electron starts rather than dying on a
+# missing display, and nothing from an earlier install can hide a fault.
+#
+# WHAT IT CANNOT COVER
+#
+# SmartScreen. Windows builds are not yet code-signed, so a real user gets an "unrecognized
+# publisher" warning that a silent install never shows. That stays a human check, and the README
+# says what to do about it.
+#
+# THE ASSERTION THAT MATTERS is /api/getnodes returning a non-empty registry. Everything cheaper
+# passes on a broken install: an install can succeed, launch, serve /api/shelf/sources and write
+# every bootstrap package to disk, with zero nodes loadable. A check that stops at "the backend
+# answered" would call that healthy.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to test (e.g. v0.7.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-launch:
+    runs-on: windows-latest
+    timeout-minutes: 45          # first launch builds a Python environment from scratch
+
+    steps:
+      - name: Fetch the published installer, anonymously
+        shell: pwsh
+        env:
+          VER: ${{ inputs.version || github.event.release.tag_name }}
+        run: |
+          $ver = $env:VER
+          $num = $ver.TrimStart('v')
+          $url = "https://github.com/BoundaryComputing/salpa/releases/download/$ver/Salpa-Setup-$num.exe"
+          Write-Host "GET $url"
+          # No token, no credentials: exactly what a visitor gets. Download links were once dead
+          # for three releases while every signed-in check passed.
+          # A release is published before its files finish uploading, so wait for this one.
+          $out = "$env:RUNNER_TEMP\SalpaSetup.exe"
+          for ($i = 1; $i -le 45; $i++) {
+            try { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing; break }
+            catch { Write-Host "  not there yet (attempt $i); waiting 20 s"; Start-Sleep 20 }
+          }
+          if (-not (Test-Path $out)) { throw "no installer at $url after 15 minutes" }
+          $f = Get-Item $out
+          Write-Host "size: $([math]::Round($f.Length/1MB,1)) MB"
+          if ($f.Length -lt 50MB) { throw "installer is only $($f.Length) bytes: an error page, not a build" }
+          # A published asset should be a PE executable, not HTML with a 200.
+          $sig = [System.IO.File]::ReadAllBytes($f.FullName)[0..1] -join ','
+          if ($sig -ne '77,90') { throw "not a PE executable (leading bytes $sig, expected 77,90 = 'MZ')" }
+          Write-Host "OK: PE executable"
+
+      # Retry: the silent NSIS install sometimes dies with 0xC0000005 in System.dll on this
+      # runner. The same installer has both failed and succeeded minutes apart, so a single
+      # attempt would report a broken release when the release is fine, which matters most here,
+      # because this workflow exists to say whether a PUBLISHED build installs.
+      #
+      # Check for the .exe rather than trusting the exit code: the crash leaves nothing
+      # installed, and an installer could plausibly exit 0 having done nothing.
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $ok = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $p = Start-Process -FilePath "$env:RUNNER_TEMP\SalpaSetup.exe" -ArgumentList '/S' -Wait -PassThru
+            Write-Host "attempt ${attempt}: installer exit code $($p.ExitCode)"
+            Start-Sleep 5
+            $found = Get-ChildItem "$env:LOCALAPPDATA\Programs","$env:PROGRAMFILES" -Filter "Salpa.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $ok = $true; Write-Host "installed: $($found.FullName)"; break }
+            Write-Host "  nothing installed; retrying"
+            Start-Sleep 10
+          }
+          if (-not $ok) { throw "installer failed 3 times: that is a real failure, not flakiness" }
+
+      - name: Locate what was installed
+        id: locate
+        shell: pwsh
+        run: |
+          # An NSIS per-user install goes under LOCALAPPDATA\Programs and a per-machine one under
+          # Program Files. Search both rather than assuming.
+          $roots = @("$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
+          $exe = $null
+          foreach ($r in $roots) {
+            if (-not (Test-Path $r)) { continue }
+            $hit = Get-ChildItem $r -Recurse -Filter 'Salpa.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { $exe = $hit.FullName; break }
+          }
+          if (-not $exe) { throw "Salpa.exe not found after a successful install; searched: $($roots -join ', ')" }
+          Write-Host "installed: $exe"
+          "exe=$exe" >> $env:GITHUB_OUTPUT
+
+      - name: Launch and wait for the backend
+        shell: pwsh
+        run: |
+          $exe = '${{ steps.locate.outputs.exe }}'
+          Start-Process -FilePath $exe
+          $deadline = (Get-Date).AddMinutes(20)
+          $up = $false
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri 'http://localhost:18000/docs' -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { $up = $true; break }
+            } catch { }
+            Start-Sleep -Seconds 15
+          }
+          if (-not $up) { throw "backend never answered on :18000 within 20 minutes" }
+          Write-Host "backend is up"
+
+      - name: The assertion that matters — is the node registry actually populated?
+        shell: pwsh
+        run: |
+          # The lazy bootstrap is started by first marketplace access, exactly as the UI does it.
+          # Without this, /api/getnodes is legitimately empty and the check would fail falsely.
+          try { Invoke-WebRequest -Uri 'http://localhost:18000/api/marketplace/packages' -UseBasicParsing -TimeoutSec 120 | Out-Null } catch { }
+          Start-Sleep -Seconds 25
+
+          $raw = (Invoke-WebRequest -Uri 'http://localhost:18000/api/getnodes' -UseBasicParsing -TimeoutSec 60).Content
+          Write-Host "/api/getnodes returned $($raw.Length) bytes"
+          $keys = [regex]::Matches($raw, '"node_key"').Count
+          Write-Host "node_key entries: $keys"
+          if ($keys -lt 1) {
+            Write-Host "::error::The node registry is EMPTY. The app installs, launches and serves the marketplace, but no node can be placed on a canvas, while every cheaper signal reports success."
+            throw "empty node registry"
+          }
+          Write-Host "OK: $keys nodes loadable"
+
+      - name: Diagnostics (always, but especially on failure)
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "--- processes ---"
+          Get-Process -Name 'Salpa' -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table | Out-String | Write-Host
+          Write-Host "--- app data ---"
+          foreach ($p in @("$env:APPDATA\bocoflow-electron", "$env:USERPROFILE\.bocoflow")) {
+            if (Test-Path $p) {
+              $mb = [math]::Round((Get-ChildItem $p -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum/1MB,1)
+              Write-Host "$p : $mb MB"
+            } else { Write-Host "$p : absent" }
+          }
+          Write-Host "--- main.log tail ---"
+          $log = "$env:APPDATA\Salpa\logs\main.log"
+          if (-not (Test-Path $log)) { $log = "$env:APPDATA\bocoflow-electron\logs\main.log" }
+          if (Test-Path $log) { Get-Content $log -Tail 60 | Out-String | Write-Host } else { Write-Host "no main.log at $log" }
+
+      - name: Uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process -Name 'Salpa' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          $dir = Split-Path -Parent '${{ steps.locate.outputs.exe }}'
+          $un = Join-Path $dir 'Uninstall Salpa.exe'
+          if (Test-Path $un) {
+            $p = Start-Process -FilePath $un -ArgumentList '/S' -Wait -PassThru
+            Write-Host "uninstaller exit: $($p.ExitCode)"
+            Start-Sleep -Seconds 5
+            if (Test-Path '${{ steps.locate.outputs.exe }}') {
+              Write-Host "::warning::Salpa.exe still present after a silent uninstall"
+            } else { Write-Host "OK: removed" }
+          } else {
+            Write-Host "::warning::no uninstaller found at $un; a user cannot remove this cleanly"
+          }
