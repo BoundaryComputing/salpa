@@ -109,12 +109,12 @@ jobs:
           setsid xvfb-run -a /usr/bin/bocoflow-electron --no-sandbox \
             > "$RUNNER_TEMP/first.log" 2>&1 < /dev/null &
           for i in $(seq 1 120); do
-            if curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs; then
+            if curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/health; then
               echo "backend up after ~$((i*15))s"; break
             fi
             sleep 15
           done
-          curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs || {
+          curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/health || {
             echo "::error::backend never answered on :18000 within 30 minutes"
             tail -60 "$RUNNER_TEMP/first.log"; exit 1; }
 
@@ -124,13 +124,16 @@ jobs:
           set -uo pipefail
           # Node bootstrapping is LAZY: it fires on first marketplace access, not at startup.
           # Without this the registry is legitimately empty and the count means nothing.
-          curl -sf -o /dev/null --max-time 180 http://127.0.0.1:18000/api/marketplace/packages || true
+          # The app's local API token (Salpa 0.12 and later), for the calls below; none before 0.12.
+          TOK=$(python3 -c "import json,os; print(json.load(open(os.path.expanduser('~/.bocoflow/local-api.json'))).get('token') or '')" 2>/dev/null || true)
+          TOKEN_ARGS=(); [ -n "$TOK" ] && TOKEN_ARGS=(-H "X-Salpa-Token: $TOK")
+          curl -sf -o /dev/null --max-time 180 "${TOKEN_ARGS[@]}" http://127.0.0.1:18000/api/marketplace/packages || true
           sleep 30
-          N=$(curl -sf --max-time 60 http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
+          N=$(curl -sf --max-time 60 "${TOKEN_ARGS[@]}" http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
           echo "first-launch node_key entries: $N"
           echo "n=$N" >> "$GITHUB_OUTPUT"
           echo "packages the app believes are installed:"
-          curl -sf --max-time 30 http://127.0.0.1:18000/api/shelf/registry \
+          curl -sf --max-time 30 "${TOKEN_ARGS[@]}" http://127.0.0.1:18000/api/shelf/registry \
             | python3 -c "import json,sys; [print('  ', p['name'], p.get('shelf_state')) for p in json.load(sys.stdin).get('packages',[])]" || true
 
       # Everything above stops at "the backend answered" and "the registry is non-empty". Neither
@@ -164,11 +167,14 @@ jobs:
           setsid xvfb-run -a /usr/bin/bocoflow-electron --no-sandbox \
             > "$RUNNER_TEMP/second.log" 2>&1 < /dev/null &
           for i in $(seq 1 60); do
-            curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/docs && break
+            curl -sf -o /dev/null --max-time 5 http://127.0.0.1:18000/health && break
             sleep 10
           done
           sleep 20
-          N=$(curl -sf --max-time 60 http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
+          # The app's local API token (Salpa 0.12 and later), for the calls below; none before 0.12.
+          TOK=$(python3 -c "import json,os; print(json.load(open(os.path.expanduser('~/.bocoflow/local-api.json'))).get('token') or '')" 2>/dev/null || true)
+          TOKEN_ARGS=(); [ -n "$TOK" ] && TOKEN_ARGS=(-H "X-Salpa-Token: $TOK")
+          N=$(curl -sf --max-time 60 "${TOKEN_ARGS[@]}" http://127.0.0.1:18000/api/getnodes | grep -o '"node_key"' | wc -l)
           echo "after-restart node_key entries: $N"
           echo "n=$N" >> "$GITHUB_OUTPUT"
 

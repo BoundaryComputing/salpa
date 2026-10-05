@@ -29,12 +29,27 @@ function Fail($msg) {
   Write-Output ("RESULT: FAIL  $msg (after " + (Since $T0) + "s; work dir $Work)")
   exit 1
 }
+# The app's local API token. Salpa 0.12 and later write it at each launch; the app accepts calls
+# without it until a release requires it. It is read on every call, and sent only when the file names
+# the address this script calls, on this machine. Before 0.12 there is no file and nothing is sent.
+function Token-Headers {
+  $f = if ($env:SALPA_LOCAL_API_FILE) { $env:SALPA_LOCAL_API_FILE } else { Join-Path $env:USERPROFILE ".bocoflow\local-api.json" }
+  try {
+    $d = Get-Content -Raw -LiteralPath $f -ErrorAction Stop | ConvertFrom-Json
+    $a = [Uri]$Api; $u = [Uri][string]$d.url
+    $here = @('127.0.0.1', 'localhost', '::1', '[::1]')
+    if ($d.token -and ($here -contains $a.Host) -and ($here -contains $u.Host) -and $a.Port -eq $u.Port) {
+      return @{ 'X-Salpa-Token' = [string]$d.token }
+    }
+  } catch { }
+  return @{}
+}
 function Get-Json($path) {
-  try { return Invoke-RestMethod -Method Get -Uri "$Api$path" -TimeoutSec 60 } catch { return $null }
+  try { return Invoke-RestMethod -Method Get -Uri "$Api$path" -Headers (Token-Headers) -TimeoutSec 60 } catch { return $null }
 }
 function Post-Json($path, $obj) {
   try {
-    return Invoke-RestMethod -Method Post -Uri "$Api$path" -ContentType "application/json" `
+    return Invoke-RestMethod -Method Post -Uri "$Api$path" -Headers (Token-Headers) -ContentType "application/json" `
       -Body ($obj | ConvertTo-Json -Compress -Depth 8) -TimeoutSec 120
   } catch { return @{ error = $_.Exception.Message } }
 }
@@ -68,7 +83,7 @@ $Tworker = Since $t; Ok "$workers worker(s) registered (${Tworker}s)"
 
 # 3. template -- bootstrap is lazy: touch the marketplace, then wait for the entry AND its package
 $t = Get-Date
-try { Invoke-RestMethod -Uri "$Api/marketplace/packages" -TimeoutSec 180 | Out-Null } catch {}
+try { Invoke-RestMethod -Uri "$Api/marketplace/packages" -Headers (Token-Headers) -TimeoutSec 180 | Out-Null } catch {}
 $entry = Wait-For 120 5 {
   $l = Get-Json "/shelf/workflows"
   if ($l -and $l.workflows) {

@@ -49,8 +49,33 @@ fail()  { echo "  FAIL  $*"; echo "RESULT: FAIL  $* (after $(since "$T0")s; work
 
 # Body on success, empty on transport error. --max-time so a wedged server cannot hang a poll;
 # the loops carry their own deadlines.
-get()  { curl -sS --max-time 60 "$API$1" 2>/dev/null; }
-post() { curl -sS --max-time 120 -H 'Content-Type: application/json' -X POST --data "$2" "$API$1" 2>/dev/null; }
+# The app's local API token. Salpa 0.12 and later write it at each launch to a file only the user
+# can read; the app accepts calls without it until a release requires it. It is read on every call,
+# since the app may relaunch, and sent only when that file names the address this script calls, on
+# this machine. Before 0.12 there is no file and nothing is sent.
+TOKEN_FILE="${SALPA_LOCAL_API_FILE:-$HOME/.bocoflow/local-api.json}"
+TOKEN_ARGS=()
+load_token() {
+  TOKEN_ARGS=()
+  [ -f "$TOKEN_FILE" ] || return 0
+  local t
+  t=$(python3 - "$TOKEN_FILE" "$API" 2>/dev/null <<'PYEOF'
+import json, sys
+from urllib.parse import urlsplit
+d = json.load(open(sys.argv[1]))
+a, u = urlsplit(sys.argv[2]), urlsplit(str(d.get("url") or ""))
+here = {"127.0.0.1", "localhost", "::1"}
+if (a.hostname or "") in here and (u.hostname or "") in here and a.port == u.port and d.get("token"):
+    print(d["token"])
+PYEOF
+)
+  [ -n "$t" ] && TOKEN_ARGS=(-H "X-Salpa-Token: $t")
+  return 0
+}
+
+# ${TOKEN_ARGS[@]+...} because macOS's bash 3.2 calls an empty array unbound under set -u.
+get()  { load_token; curl -sS --max-time 60 ${TOKEN_ARGS[@]+"${TOKEN_ARGS[@]}"} "$API$1" 2>/dev/null; }
+post() { load_token; curl -sS --max-time 120 ${TOKEN_ARGS[@]+"${TOKEN_ARGS[@]}"} -H 'Content-Type: application/json' -X POST --data "$2" "$API$1" 2>/dev/null; }
 
 # jq without jq. `jpy EXPR` evaluates a Python expression over the JSON on stdin (bound to `d`)
 # and prints it -- strings raw, everything else as JSON, None as nothing. Any error prints
@@ -103,7 +128,7 @@ T_worker=$(since "$t"); ok "$workers worker(s) registered (${T_worker}s)"
 # Bootstrapping of the default packages is LAZY -- it fires on first marketplace access, not
 # at startup (linux-deb-smoke.yml). Touch it, then wait for the template.
 t=$(now)
-curl -sf --max-time 180 -o /dev/null "$API/marketplace/packages" || true
+load_token; curl -sf --max-time 180 ${TOKEN_ARGS[@]+"${TOKEN_ARGS[@]}"} -o /dev/null "$API/marketplace/packages" || true
 entry=$(poll 120 5 template_entry) \
   || { echo "  offered: $(get /shelf/workflows | jpy '[(w.get("id"), w.get("source_id"), w.get("packages_installed"), w.get("packages_total")) for w in d.get("workflows", [])]')"
        fail "hello-world-pipeline not offered with its package installed within 120s"; }
